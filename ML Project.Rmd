@@ -1,0 +1,200 @@
+---
+title: "Practical Machine Learning Project"
+output:
+  prettydoc::html_pretty:
+    theme: cayman
+    highlight: github
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Background
+
+> Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+
+# Objective
+
+The goal of this project is to predict the manner in which each subject did their respective exercise. This is the `classe` variable in the training set. This report aims to describe how the model was built, explain the method of cross validation used, provide an estimation of out of sample error, and to provide a justification of model choices. The model built on the training set will then be used to predict 20 different test cases. 
+
+# Data
+
+The training data is available here:
+  
+  * https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+  
+The testing dats is available here:
+
+  * https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+  
+**Note:**
+The data for this project come from this source: 
+  
+  * http://groupware.les.inf.puc-rio.br/har. 
+
+If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment. 
+
+# Methodology
+
+This analysis will attempt to clasify the data by using three types of robust classification algorithm:
+
+* Random Forest
+* Boosting
+* Support Vector Machine (Both linear and radial kernal)
+
+Theses models have been selected due to their high accuracy and manageable complexity. There are algorithms that could offer higher accuracy in the `caret` package such as `mxnet`, however due to hardware and time limitations, these may be slightly out of the scope of this project. 
+
+These models will be built on a 70% partition of the training dataset and benchmarked against a validation set, before performing predictions against 20 unlabeled test exmples.  
+
+These models will be cross validated using the following train control function: `trainControl(method = "cv", number = 5)`. The only other modified parameter is the maximum number of trees allocated to the random forest model which has been limited to 80 in order to reduce computational complexity.
+
+
+```{r message=FALSE, warning=FALSE}
+# Load Data 
+if(!dir.exists("MlProject_data")) {
+  dir.create("MlProject_data")
+}
+
+if(!file.exists("./MlProject_data/training.csv")){
+  download.file(url = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", "./MlProject_data/training.csv")
+}
+
+if(!file.exists("./MlProject_data/testing.csv")){
+  download.file(url = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", "./MlProject_data/testing.csv")
+}
+
+training <- read.csv("./MlProject_data/training.csv", header = TRUE, sep = ",")
+testing <- read.csv("./MlProject_data/testing.csv", header = TRUE, sep = ",")
+dim(training);dim(testing)
+
+# Load Packages
+library(caret)
+library(tidyverse)
+library(randomForest)
+```
+
+## Data Cleaning and Partitioning
+```{r}
+# Data cleaning
+# Remove first seven cols of useless info
+training[, 1:7] <- NULL
+testing[, 1:7] <- NULL
+
+# Remove cols containing more than 90% NA 
+removeColNa <- which(colSums(is.na(training) | training=="")>0.9*dim(training)[1])
+training <- training[, -removeColNa]
+
+removeColNa <- which(colSums(is.na(testing) | testing=="")>0.9*dim(testing)[1])
+testing <- testing[, -removeColNa]
+
+dim(training); dim(testing)
+
+# Create training and validation sets
+inTrain <- createDataPartition(y = training$classe, p = 0.7, list = FALSE)
+  train <- training[inTrain, ]
+  val <- training[-inTrain, ] 
+```
+
+## Build Models and Predict on Validation Set
+```{r, cache=TRUE}
+# Specify the use of cross validation
+fitControl <- trainControl(method = "cv", number = 5)
+
+# Random forest
+mod1 <- train(classe ~., data = train, method = "rf", prox = TRUE, ntree=80, trControl = fitControl)
+
+# Boosting
+mod2 <- train(classe ~., data = train, method = "gbm", verbose = FALSE, trControl = fitControl)
+
+# Classification with Linear Support Vector Machine
+mod3 <- train(classe ~., data = train, method = "svmLinear", trControl =   fitControl)
+
+# Classification with Radial Support Vector Machine
+mod4 <- train(classe ~., data = train, method = "svmRadial", trControl =   fitControl)
+```
+
+```{r}
+# prediction for Rf
+predRF <- predict(mod1, val)
+
+# Prediction for Gbm
+predGbm <- predict(mod2, val)
+
+# Prediction for SVML
+predSvmL<- predict(mod3, val)
+
+# Prediction for SVMR
+predSvmR <- predict(mod4, val)
+```
+
+
+## Model Diagnostics
+
+### Random Forest Model Diagnostic
+```{r}
+# Diagnostics for Random Forest
+plot(mod1$finalModel, main = "Error vs # Trees")
+plot(mod1, main = "Cross-Validation Accuracy vs # Random Predictors")
+confRf <- confusionMatrix(val$classe, predRF)
+confRf
+```
+
+### Boosting Model Diagnostic
+```{r}
+# Diagnostics for Boosting
+plot(mod2)
+confGbm <- confusionMatrix(val$classe, predGbm)
+confGbm
+```
+
+### Support Vector Machine Diagnostic
+```{r}
+# Diagnostics for Linear Support Vector Machine
+mod3$finalModel
+confSvmL <- confusionMatrix(val$classe, predSvmL)
+confSvmL
+
+# Diagnostics for Radial Support Vector Machine
+mod4$finalModel
+confSvmR <- confusionMatrix(val$classe, predSvmR)
+confSvmR
+```
+
+## Prediction on the Test Set
+```{r}
+# prediction for Rf
+predRFT <- predict(mod1, testing)
+
+# Prediction for Gbm
+predGbmT <- predict(mod2, testing)
+
+# Prediction for Linear SVM
+predSvmL <- predict(mod3, testing)
+
+# Prediction for Radial SVM
+predSvmR <- predict(mod4, testing)
+
+
+predRFT
+predGbmT
+predSvmL
+predSvmR
+```
+
+## Conclusion
+
+The Kappa values for each model are listed below in rank of accuracy:
+
+1. Random Forest: **Kappa = 0.991**
+2. Boosting: **Kappa = 0.957**
+3. Support Vector Machine:
+
+  * Gaussian Kernal: **Kappa = 0.914**
+  * Linear Kernal: **Kappa = 0.7353**
+
+As shown above, the most accurate model is the random forest, whereas the least accurate is the support vector machine with the linear kernal.
+
+Both the boosting model and the random forest perfectly agree with eachother when predicting on the testing set, which is not surprising as they are both highly accurate. The support vector machine with the radial kernal also agrees with 80% of the above predictions. From the limited data available in the test set here, the out of sample error can be estimated to be moderately low. 
+
+These models could be combined to create an ensemble model, however this will not be necessary as the random forest model already has a large Kappa value of 99.1%. 
